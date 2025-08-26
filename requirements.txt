@@ -1,0 +1,12 @@
+telethon
+cryptg
+pymongo
+tqdm
+pysocks
+rarfile
+py7zr
+multivolumefile
+python-dotenv
+unrar
+aiofiles
+asyncio
