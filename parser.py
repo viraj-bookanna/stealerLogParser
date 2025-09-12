@@ -135,6 +135,7 @@ async def main():
                 shutil.rmtree(dest_folder)
                 os.makedirs(dest_folder, exist_ok=True)
                 await asyncio.to_thread(extract_file, file, dest_folder, message.text.split('```')[1])
+            os.remove(file)
             ulp_csv = os.path.join(cwd, f'ulp_{message.id}.csv')
             file_tree = os.path.join(cwd, f'tree_{message.id}.txt')
             await ulpDump(dest_folder, ulp_csv)
@@ -143,8 +144,7 @@ async def main():
             await bot.send_file(LOG_CHANNEL, file=ulp_csv)
             await bot.send_file(LOG_CHANNEL, file=file_tree)
             database.update_one({'key': 'LAST_MESSAGE_ID'}, {"$set": {"value": message.id}}, upsert=True)
-            shutil.rmtree(dest_folder)
-            os.remove(file)
+            await asyncio.to_thread(shutil.rmtree(dest_folder))
         except KeyboardInterrupt:
             break
         except:
