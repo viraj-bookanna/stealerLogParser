@@ -143,6 +143,7 @@ async def main():
     last = last if last else {'key': 'LAST_MESSAGE_ID', 'value':1}
     cwd = os.getcwd()
     LOG_CHANNEL = int(os.environ['LOG_CHANNEL'])
+    os.makedirs(os.path.join(cwd, 'files'), exist_ok=True)
     async for message in client.iter_messages(int(os.environ['RAT_LOGS']), min_id=last['value'], filter=InputMessagesFilterDocument, reverse=True):
         try:
             print(f'Message ID: {message.id}')
@@ -158,8 +159,8 @@ async def main():
                 os.makedirs(dest_folder, exist_ok=True)
                 await asyncio.to_thread(extract_file, file, dest_folder, message.text.split('```')[1])
             os.remove(file)
-            ulp_csv = os.path.join(cwd, f'ulp_{message.id}.csv')
-            file_tree = os.path.join(cwd, f'tree_{message.id}.txt')
+            ulp_csv = os.path.join(cwd, 'files', f'ulp_{message.id}.csv')
+            file_tree = os.path.join(cwd, 'files', f'tree_{message.id}.txt')
             await ulpDump(dest_folder, ulp_csv)
             async with aiofiles.open(file_tree, 'w', encoding="utf-8") as f:
                 await writeFileTree(dest_folder, f)
