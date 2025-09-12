@@ -16,23 +16,45 @@ mongo_client = MongoClient(os.environ['MONGODB_URI'], server_api=ServerApi('1'))
 def extract_file(inputFile, outputFolder, password=None):
     if inputFile.lower().endswith('.zip'):
         with zipfile.ZipFile(inputFile, 'r') as zip_ref:
-            if password is not None:
+            if password:
                 zip_ref.setpassword(password.encode('utf-8'))
-            zip_ref.extractall(outputFolder)
+            for info in zip_ref.infolist():
+                try:
+                    zip_ref.extract(info, path=outputFolder)
+                except:
+                    continue
     elif inputFile.lower().endswith('.rar'):
         with rarfile.RarFile(inputFile, 'r') as rar_ref:
-            if password is not None:
+            if password:
                 rar_ref.setpassword(password)
-            rar_ref.extractall(outputFolder)
+            for info in rar_ref.infolist():
+                try:
+                    rar_ref.extract(info, path=outputFolder)
+                except:
+                    continue
     elif inputFile.lower().endswith('.7z'):
-        with py7zr.SevenZipFile(inputFile, 'r', password=password) as seven_zip_ref:
-            seven_zip_ref.extractall(outputFolder)
+        try:
+            with py7zr.SevenZipFile(inputFile, 'r', password=password) as seven_zip_ref:
+                for name in seven_zip_ref.getnames():
+                    try:
+                        seven_zip_ref.extract(path=outputFolder, targets=[name])
+                    except:
+                        continue
+        except:
+            pass
     elif inputFile.lower().endswith(('.7z.001', '.7z.0001')):
-        with multivolumefile.open(inputFile.rsplit('.7z', 1)[0]+'.7z', mode='rb') as target_archive:
-            with py7zr.SevenZipFile(target_archive, 'r', password=password) as seven_zip_ref:
-                seven_zip_ref.extractall(outputFolder)
+        try:
+            with multivolumefile.open(inputFile.rsplit('.7z', 1)[0]+'.7z', mode='rb') as target_archive:
+                with py7zr.SevenZipFile(target_archive, 'r', password=password) as seven_zip_ref:
+                    for name in seven_zip_ref.getnames():
+                        try:
+                            seven_zip_ref.extract(path=outputFolder, targets=[name])
+                        except:
+                            continue
+        except:
+            pass
     else:
-        raise Exception("Unknown file format")
+        raise Exception(f"Unknown file format: {inputFile}")
 
 async def writeFileTree(root_path, file_to_write, prefix=""):
     entries = sorted(os.listdir(root_path))
@@ -132,7 +154,7 @@ async def main():
             try:
                 await asyncio.to_thread(extract_file, file, dest_folder)
             except:
-                shutil.rmtree(dest_folder)
+                await asyncio.to_thread(shutil.rmtree, dest_folder)
                 os.makedirs(dest_folder, exist_ok=True)
                 await asyncio.to_thread(extract_file, file, dest_folder, message.text.split('```')[1])
             os.remove(file)
@@ -144,7 +166,7 @@ async def main():
             await bot.send_file(LOG_CHANNEL, file=ulp_csv)
             await bot.send_file(LOG_CHANNEL, file=file_tree)
             database.update_one({'key': 'LAST_MESSAGE_ID'}, {"$set": {"value": message.id}}, upsert=True)
-            await asyncio.to_thread(shutil.rmtree(dest_folder))
+            await asyncio.to_thread(shutil.rmtree, dest_folder)
         except KeyboardInterrupt:
             break
         except:
