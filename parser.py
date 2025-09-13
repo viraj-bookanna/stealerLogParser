@@ -170,8 +170,8 @@ async def main():
             await asyncio.to_thread(shutil.rmtree, dest_folder)
         except KeyboardInterrupt:
             break
-        except:
-            pass
+        except Exception as e:
+            print(repr(e))
 
 with client:
     client.loop.run_until_complete(main())
