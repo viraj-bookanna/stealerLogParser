@@ -13,12 +13,28 @@ client = TelegramClient(StringSession(os.environ['STRING_SESSION']), os.environ[
 bot = TelegramClient('bot', 6, 'eb06d4abfb49dc3eeb1aeb98ae0f581e').start(bot_token=os.environ['BOT_TOKEN'])
 mongo_client = MongoClient(os.environ['MONGODB_URI'], server_api=ServerApi('1'))
 
+class Pbar7z(py7zr.callbacks.ExtractCallback, tqdm):
+    def __init__(self, *args, **kwargs):
+        super().__init__(self, *args, **kwargs)
+    def report_start_preparation(self):
+        pass
+    def report_start(self, processing_file_path, processing_bytes):
+        pass
+    def report_update(self, u):
+        pass
+    def report_end(self, processing_file_path, wrote_bytes):
+        self.update(int(wrote_bytes))
+    def report_postprocess(self):
+        pass
+    def report_warning(self, message):
+        pass
+
 def extract_file(inputFile, outputFolder, password=None):
     if inputFile.lower().endswith('.zip'):
         with zipfile.ZipFile(inputFile, 'r') as zip_ref:
             if password:
                 zip_ref.setpassword(password.encode('utf-8'))
-            for info in zip_ref.infolist():
+            for info in tqdm(zip_ref.infolist(), desc="└─ Extracting"):
                 try:
                     zip_ref.extract(info, path=outputFolder)
                 except:
@@ -27,39 +43,40 @@ def extract_file(inputFile, outputFolder, password=None):
         with rarfile.RarFile(inputFile, 'r') as rar_ref:
             if password:
                 rar_ref.setpassword(password)
-            for info in rar_ref.infolist():
+            for info in tqdm(rar_ref.infolist(), desc="└─ Extracting"):
                 try:
                     rar_ref.extract(info, path=outputFolder)
                 except:
                     continue
     elif inputFile.lower().endswith('.7z'):
-        try:
-            with py7zr.SevenZipFile(inputFile, 'r', password=password) as seven_zip_ref:
-                for name in seven_zip_ref.getnames():
-                    try:
-                        seven_zip_ref.extract(path=outputFolder, targets=[name])
-                    except:
-                        continue
-        except:
-            pass
+        with py7zr.SevenZipFile(inputFile, 'r', password=password) as seven_zip_ref:
+            with Pbar7z(
+                total=seven_zip_ref.archiveinfo().uncompressed,
+                unit='iB',
+                unit_scale=True,
+                unit_divisor=1024,
+                desc="└─ Extracting"
+            ) as progress:
+                seven_zip_ref.extractall(path=outputFolder, callback=progress)
     elif inputFile.lower().endswith(('.7z.001', '.7z.0001')):
-        try:
-            with multivolumefile.open(inputFile.rsplit('.7z', 1)[0]+'.7z', mode='rb') as target_archive:
-                with py7zr.SevenZipFile(target_archive, 'r', password=password) as seven_zip_ref:
-                    for name in seven_zip_ref.getnames():
-                        try:
-                            seven_zip_ref.extract(path=outputFolder, targets=[name])
-                        except:
-                            continue
-        except:
-            pass
+        with multivolumefile.open(inputFile.rsplit('.7z', 1)[0]+'.7z', mode='rb') as target_archive:
+            with py7zr.SevenZipFile(target_archive, 'r', password=password) as seven_zip_ref:
+                with Pbar7z(
+                    total=seven_zip_ref.archiveinfo().uncompressed,
+                    unit='iB',
+                    unit_scale=True,
+                    unit_divisor=1024,
+                    desc="└─ Extracting"
+                ) as progress:
+                    seven_zip_ref.extractall(path=outputFolder, callback=progress)
     else:
         raise Exception(f"Unknown file format: {inputFile}")
 
 async def writeFileTree(root_path, file_to_write, prefix=""):
     entries = sorted(os.listdir(root_path))
     entries_count = len(entries)
-    for i, entry in enumerate(entries):
+    pg_list = entries if prefix!="" else tqdm(entries, desc="    └─ Tree")
+    for i, entry in enumerate(pg_list):
         full_path = os.path.join(root_path, entry)
         connector = "└── " if i == entries_count - 1 else "├── "
         await file_to_write.write(prefix + connector + entry + "\n")
@@ -112,7 +129,7 @@ def findPasswordsFile(extract_path):
 async def ulpDump(extract_path, dump_file):
     extract_path, file_name = findPasswordsFile(extract_path)
     async with aiofiles.open(dump_file, 'w', encoding="utf-8") as f:
-        for logdir in os.listdir(extract_path):
+        for logdir in tqdm(os.listdir(extract_path), desc="    ├─ Parsing"):
             logdir = os.path.join(extract_path, logdir)
             if not os.path.isdir(logdir):
                 continue
@@ -131,7 +148,7 @@ class dlProgress:
             unit='iB',
             unit_scale=True,
             unit_divisor=1024,
-            desc='Downloading'
+            desc='├─ Downloading'
         )
     def update(self, current, total):
         self.pbar.update(current-self.last)
@@ -145,19 +162,24 @@ async def main():
     LOG_CHANNEL = int(os.environ['LOG_CHANNEL'])
     os.makedirs(os.path.join(cwd, 'files'), exist_ok=True)
     async for message in client.iter_messages(int(os.environ['RAT_LOGS']), min_id=last['value'], filter=InputMessagesFilterDocument, reverse=True):
+        print(f'Message ID: {message.id}')
+        print(f'Start Download: {message.file.name}')
         try:
-            print(f'Message ID: {message.id}')
-            print(f'Start Download: {message.file.name}')
             file = await message.download_media(progress_callback=dlProgress(message.file.size).update)
-            dest_folder = os.path.join(cwd, f'{message.id}')
-            print('Extracting..')
-            os.makedirs(dest_folder, exist_ok=True)
             try:
-                await asyncio.to_thread(extract_file, file, dest_folder)
-            except:
-                await asyncio.to_thread(shutil.rmtree, dest_folder)
+                dest_folder = os.path.join(cwd, f'{message.id}')
                 os.makedirs(dest_folder, exist_ok=True)
-                await asyncio.to_thread(extract_file, file, dest_folder, message.text.split('```')[1])
+                try:
+                    await asyncio.to_thread(extract_file, file, dest_folder)
+                except:
+                    await asyncio.to_thread(shutil.rmtree, dest_folder)
+                    os.makedirs(dest_folder, exist_ok=True)
+                    await asyncio.to_thread(extract_file, file, dest_folder, message.text.split('```')[1])
+            except Exception as e:
+                print(repr(e))
+                os.remove(file)
+                await asyncio.to_thread(shutil.rmtree, dest_folder)
+                continue
             os.remove(file)
             ulp_csv = os.path.join(cwd, 'files', f'ulp_{message.id}.csv')
             file_tree = os.path.join(cwd, 'files', f'tree_{message.id}.txt')
