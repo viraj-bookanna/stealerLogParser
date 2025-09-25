@@ -6,6 +6,7 @@ from pymongo.mongo_client import MongoClient
 from pymongo.server_api import ServerApi
 from tqdm import tqdm
 from telethon.tl.types import InputMessagesFilterDocument
+from FastTelethon import download_file
 
 load_dotenv(override=True)
 logging.basicConfig(format='[%(levelname) %(asctime)s] %(name)s: %(message)s', level=logging.WARNING)
@@ -139,6 +140,21 @@ async def ulpDump(extract_path, dump_file):
             async for line in parseULP(combofile):
                 await f.write(f'{line}\n')
 
+async def try_to_extract(file, dest_folder, password=None, level=0):
+    try:
+        os.makedirs(dest_folder, exist_ok=True)
+        await asyncio.to_thread(extract_file, file, dest_folder, password)
+        ex_files = os.listdir(dest_folder)
+        if level==0 and len(ex_files)==1:
+            efile = os.path.join(dest_folder, ex_files[0])
+            if os.path.isfile(efile) and ex_files[0].lower().endswith(('.rar', '.zip', '.7z')):
+                res = await try_to_extract(efile, dest_folder, password, level+1)
+                os.remove(efile)
+                return res
+    except:
+        return False
+    return True
+
 class dlProgress:
     def __init__(self, total=100):
         self.current = 0
@@ -153,6 +169,7 @@ class dlProgress:
     def update(self, current, total):
         self.pbar.update(current-self.last)
         self.last = current
+        return ''
 
 async def main():
     database = mongo_client.cfg.default
@@ -160,27 +177,21 @@ async def main():
     last = last if last else {'key': 'LAST_MESSAGE_ID', 'value':1}
     cwd = os.getcwd()
     LOG_CHANNEL = int(os.environ['LOG_CHANNEL'])
+    dl_folder = os.path.join(cwd, 'download')
+    ex_folder = os.path.join(cwd, 'extract')
+    os.makedirs(dl_folder, exist_ok=True)
+    os.makedirs(ex_folder, exist_ok=True)
     os.makedirs(os.path.join(cwd, 'files'), exist_ok=True)
     async for message in client.iter_messages(int(os.environ['RAT_LOGS']), min_id=last['value'], filter=InputMessagesFilterDocument, reverse=True):
         print(f'Message ID: {message.id}')
         print(f'Start Download: {message.file.name}')
         try:
-            file = await message.download_media(progress_callback=dlProgress(message.file.size).update)
-            try:
-                dest_folder = os.path.join(cwd, f'{message.id}')
-                os.makedirs(dest_folder, exist_ok=True)
-                try:
-                    await asyncio.to_thread(extract_file, file, dest_folder)
-                except:
-                    await asyncio.to_thread(shutil.rmtree, dest_folder)
-                    os.makedirs(dest_folder, exist_ok=True)
-                    await asyncio.to_thread(extract_file, file, dest_folder, message.text.split('```')[1])
-            except Exception as e:
-                print(repr(e))
-                os.remove(file)
-                await asyncio.to_thread(shutil.rmtree, dest_folder)
-                continue
-            os.remove(file)
+            #file = await message.download_media(dl_folder, progress_callback=dlProgress(message.file.size).update)
+            file = os.path.join(dl_folder, message.file.name)
+            with open(file, "wb") as out:
+                await download_file(client, message.document, out, progress_callback=dlProgress(message.file.size).update)
+            dest_folder = os.path.join(ex_folder, f'{message.id}')
+            await try_to_extract(file, dest_folder, message.text.split('```')[1])
             ulp_csv = os.path.join(cwd, 'files', f'ulp_{message.id}.csv')
             file_tree = os.path.join(cwd, 'files', f'tree_{message.id}.txt')
             await ulpDump(dest_folder, ulp_csv)
@@ -189,11 +200,14 @@ async def main():
             await bot.send_file(LOG_CHANNEL, file=ulp_csv)
             await bot.send_file(LOG_CHANNEL, file=file_tree)
             database.update_one({'key': 'LAST_MESSAGE_ID'}, {"$set": {"value": message.id}}, upsert=True)
-            await asyncio.to_thread(shutil.rmtree, dest_folder)
         except KeyboardInterrupt:
             break
         except Exception as e:
             print(repr(e))
+        if os.path.isfile(message.file.name):
+            os.remove(message.file.name)
+        if os.path.isdir(dest_folder):
+            await asyncio.to_thread(shutil.rmtree, dest_folder)
 
 with client:
     client.loop.run_until_complete(main())
